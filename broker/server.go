@@ -77,6 +77,7 @@ func (s *Server) Close() {
 }
 
 func (s *Server) Disconnect(clientId string) {
+	fmt.Println("disconnect")
 	client, ok := s.clients[clientId]
 	if ok {
 		client.Close()
@@ -86,6 +87,8 @@ func (s *Server) Disconnect(clientId string) {
 		for _, v := range topics {
 			clientIds := s.subscriptions[v]
 			clientIds = deleteElement(clientIds, clientId)
+			fmt.Println("client ids")
+			fmt.Println(clientIds)
 			s.subscriptions[v] = clientIds
 		}
 	}

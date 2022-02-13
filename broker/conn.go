@@ -56,8 +56,16 @@ func (c *Connection) processMqttMessage(msg packets.MqttPacket) error {
 	switch msg.Type() {
 	// 连接请求
 	case packets.TypeOfConnect:
+		connMsg := msg.(*packets.ConnectPacket)
+		clientId := string(connMsg.ClientID)
+		_,ok :=c.server.clients[clientId]
+		if ok {
+			fmt.Printf("connection with id %s already exist\n", clientId)
+			c.server.Disconnect(clientId)
+		}
+
 		var result uint8
-		if !c.onConnect(msg.(*packets.ConnectPacket)) {
+		if !c.onConnect(connMsg) {
 			result = 0x05 // Unauthorized
 		}
 

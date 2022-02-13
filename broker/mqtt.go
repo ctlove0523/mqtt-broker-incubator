@@ -117,14 +117,13 @@ func decodeHeader(rdr Reader) (hdr packets.FixedHeader, length uint32, messageTy
 }
 
 func decodeConnect(data []byte) (packets.MqttPacket, error) {
-	//TODO: Decide how to recover rom invalid packets (offsets don't equal actual reading?)
 	bookmark := uint32(0)
 
 	protoname, err := readString(data, &bookmark)
 	if err != nil {
 		return nil, err
 	}
-	ver := uint8(data[bookmark])
+	ver := data[bookmark]
 	bookmark++
 	flags := data[bookmark]
 	bookmark++
@@ -245,7 +244,7 @@ func decodeSubscribe(data []byte, hdr packets.FixedHeader) (packets.MqttPacket, 
 		}
 		qos := data[bookmark]
 		bookmark++
-		t.Qos = uint8(qos)
+		t.Qos = qos
 		topics = append(topics, t)
 	}
 	return &packets.SubscribePacket{
@@ -258,17 +257,17 @@ func decodeSubscribe(data []byte, hdr packets.FixedHeader) (packets.MqttPacket, 
 func decodeSuback(data []byte) packets.MqttPacket {
 	bookmark := uint32(0)
 	msgID := readUint16(data, &bookmark)
-	var qoses []uint8
-	maxlen := uint32(len(data))
+	var qosArray []uint8
+	maxLen := uint32(len(data))
 	//is this efficient
-	for bookmark < maxlen {
+	for bookmark < maxLen {
 		qos := data[bookmark]
 		bookmark++
-		qoses = append(qoses, qos)
+		qosArray = append(qosArray, qos)
 	}
 	return &packets.SubAckPacket{
 		MessageID: msgID,
-		Qos:       qoses,
+		Qos:       qosArray,
 	}
 }
 
@@ -302,18 +301,6 @@ func decodeUnsuback(data []byte) packets.MqttPacket {
 	return &packets.UnsubAckPacket{
 		MessageID: msgID,
 	}
-}
-
-func decodePingreq() packets.MqttPacket {
-	return &packets.PingReq{}
-}
-
-func decodePingresp() packets.MqttPacket {
-	return &packets.PingResp{}
-}
-
-func decodeDisconnect() packets.MqttPacket {
-	return &packets.DisconnectPacket{}
 }
 
 func readString(b []byte, startsAt *uint32) ([]byte, error) {

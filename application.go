@@ -13,16 +13,13 @@ func main() {
 		broker.Start()
 	}()
 
-	time.Sleep(20*time.Second)
 	mes := &packets.PublishPacket{
-		TopicName:   []byte("test"),
-		Payload: []byte("hello"),
+		TopicName: []byte("test"),
+		Payload:   []byte("hello"),
 	}
-	broker.Publish(mes)
 
-	time.Sleep(10*time.Second)
-	broker.Publish(mes)
-
-
-	time.Sleep(300 * time.Second)
+	for ; ; {
+		broker.Publish(mes)
+		time.Sleep(5 * time.Second)
+	}
 }
