@@ -20,6 +20,7 @@ type Server struct {
 	clients       map[string]*Connection
 	subscriptions map[string][]string // 订阅topic的客户端
 	clientSubs    map[string][]string // 客户端订阅的topic
+	msgIds        map[string]uint16
 }
 
 func NewServer(address string, port int) *Server {
@@ -33,6 +34,7 @@ func NewServer(address string, port int) *Server {
 		clients:       make(map[string]*Connection),
 		subscriptions: make(map[string][]string),
 		clientSubs:    make(map[string][]string),
+		msgIds:        make(map[string]uint16),
 	}
 
 	return s
@@ -77,7 +79,6 @@ func (s *Server) Close() {
 }
 
 func (s *Server) Disconnect(clientId string) {
-	fmt.Println("disconnect")
 	client, ok := s.clients[clientId]
 	if ok {
 		client.Close()
@@ -87,8 +88,6 @@ func (s *Server) Disconnect(clientId string) {
 		for _, v := range topics {
 			clientIds := s.subscriptions[v]
 			clientIds = deleteElement(clientIds, clientId)
-			fmt.Println("client ids")
-			fmt.Println(clientIds)
 			s.subscriptions[v] = clientIds
 		}
 	}
@@ -147,7 +146,7 @@ func (s *Server) onUnsubscribe(topic, clientId string) bool {
 
 func (s *Server) OnMessage(msg Message) bool {
 	if len(s.msgHandlers) != 0 {
-		for _,handler:=range s.msgHandlers {
+		for _, handler := range s.msgHandlers {
 			handler(msg)
 		}
 	}
@@ -159,18 +158,36 @@ func (s *Server) onConnect(conn *Connection) {
 	s.clients[string(conn.clientId)] = conn
 }
 
-func (s *Server) Publish(publish *packets.PublishPacket) {
-	fmt.Println("begin to publish")
-	topic := string(publish.TopicName)
+func (s *Server) PublishMsg(topic string, qos byte, payload []byte) {
 	clientIds := s.subscriptions[topic]
-	fmt.Println(clientIds)
-	for _, id := range clientIds {
-		conn := s.clients[id]
-		_, err := publish.EncodeTo(conn.socket)
+	if len(clientIds) == 0 {
+		return
+	}
+
+	pubPacket := &packets.PublishPacket{}
+	pubPacket.Header.MessageType = 3
+	pubPacket.Header.Qos = qos
+	pubPacket.TopicName = []byte(topic)
+	pubPacket.Payload = payload
+
+	for _, clientId := range clientIds {
+		conn := s.clients[clientId]
+		if qos > 0 {
+			pubPacket.MessageID = s.messageId(clientId)
+		} else {
+			pubPacket.MessageID = 0
+		}
+
+		_, err := pubPacket.EncodeTo(conn.socket)
 		if err != nil {
 			fmt.Println(err)
 		}
 	}
+}
+
+func (s *Server) messageId(clientId string) uint16 {
+	s.msgIds[clientId] += 1
+	return s.msgIds[clientId]
 }
 
 func deleteElement(container []string, element string) []string {

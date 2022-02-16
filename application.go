@@ -2,7 +2,6 @@ package main
 
 import (
 	mqttServer "github.com/ctlove0523/mqtt-brokers/broker"
-	"github.com/ctlove0523/mqtt-brokers/broker/packets"
 	"time"
 )
 
@@ -13,13 +12,8 @@ func main() {
 		broker.Start()
 	}()
 
-	mes := &packets.PublishPacket{
-		TopicName: []byte("test"),
-		Payload:   []byte("hello"),
-	}
-
 	for ; ; {
-		broker.Publish(mes)
+		broker.PublishMsg("test", 1, []byte("hello client"))
 		time.Sleep(5 * time.Second)
 	}
 }
