@@ -6,8 +6,8 @@ import (
 )
 
 type SubAckPacket struct {
-	FixedHeader
-	MessageID   uint16
+	Header    FixedHeader
+	MessageID uint16
 	Qos       []uint8
 }
 
@@ -22,7 +22,7 @@ func (s *SubAckPacket) EncodeTo(w io.Writer) (int, error) {
 	}
 
 	// Write the header in front and return the buffer
-	start := writeHeader(head, TypeOfSubAck, nil, offset)
+	start := writeHeader(head, TypeOfSubAck, &s.Header, offset)
 	return w.Write(array.Slice(start, maxHeaderSize+offset))
 }
 

@@ -58,7 +58,7 @@ func (c *Connection) processMqttMessage(msg packets.MqttPacket) error {
 	case packets.TypeOfConnect:
 		connMsg := msg.(*packets.ConnectPacket)
 		clientId := string(connMsg.ClientID)
-		_,ok :=c.server.clients[clientId]
+		_, ok := c.server.clients[clientId]
 		if ok {
 			fmt.Printf("connection with id %s already exist\n", clientId)
 			c.server.Disconnect(clientId)
@@ -79,6 +79,9 @@ func (c *Connection) processMqttMessage(msg packets.MqttPacket) error {
 	case packets.TypeOfSubscribe:
 		packet := msg.(*packets.SubscribePacket)
 		ack := packets.SubAckPacket{
+			Header: packets.FixedHeader{
+				MessageType: 9,
+			},
 			MessageID: packet.MessageID,
 			Qos:       make([]uint8, 0, len(packet.Subscriptions)),
 		}
@@ -144,6 +147,12 @@ func (c *Connection) processMqttMessage(msg packets.MqttPacket) error {
 				return err
 			}
 		}
+
+	case packets.TypeOfPubAck:
+		packet := msg.(*packets.PubAckPacket)
+		fmt.Println("get pub ack")
+		fmt.Println(packet.MessageID)
+		c.server.onPubAck(string(c.clientId), packet.MessageID)
 	}
 
 	return nil

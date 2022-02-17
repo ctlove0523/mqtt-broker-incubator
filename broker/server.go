@@ -158,6 +158,9 @@ func (s *Server) onConnect(conn *Connection) {
 	s.clients[string(conn.clientId)] = conn
 }
 
+func (s *Server) onPubAck(clientId string, messageId uint16) {
+}
+
 func (s *Server) PublishMsg(topic string, qos byte, payload []byte) {
 	clientIds := s.subscriptions[topic]
 	if len(clientIds) == 0 {
@@ -166,6 +169,7 @@ func (s *Server) PublishMsg(topic string, qos byte, payload []byte) {
 
 	pubPacket := &packets.PublishPacket{}
 	pubPacket.Header.MessageType = 3
+	pubPacket.Header.Dup = false
 	pubPacket.Header.Qos = qos
 	pubPacket.TopicName = []byte(topic)
 	pubPacket.Payload = payload
