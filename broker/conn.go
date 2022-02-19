@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/ctlove0523/mqtt-brokers/broker/packets"
 	"io"
+	"log"
 	"net"
 	"time"
 )
@@ -20,32 +21,34 @@ type Connection struct {
 func (c *Connection) Close() {
 	err := c.socket.Close()
 	if err != nil {
-		fmt.Printf("close connection failed %v", err)
+		log.Printf("close connection faield,client id = %s,err = %s\n", c.clientId, err)
 	} else {
-		fmt.Println("close connection success")
+		log.Println("close connection success")
 	}
 }
 
 // Process 处理连接上的请求
 func (c *Connection) Process() error {
-	defer c.Close()
+	//defer c.Close()
 	reader := bufio.NewReaderSize(c.socket, 65536)
 	maxSize := int64(10240)
 	for {
 		// read/write 限制以处理悬空连接
 		err := c.socket.SetDeadline(time.Now().Add(time.Second * 120))
 		if err != nil {
-			fmt.Printf("conn set deadline failed %v", err)
+			log.Printf("conn set deadline failed %v", err)
 		}
 
 		// 解码 MQTT packet
 		msg, err := DecodePacket(reader, maxSize)
 		if err != nil {
+			log.Printf("decode mqtt packet failed %s\n", err)
 			return err
 		}
 
 		// 处理接收的MQTT消息
 		if err := c.processMqttMessage(msg); err != nil {
+			log.Printf("process mqtt message failed %s\n", err)
 			return err
 		}
 	}
@@ -89,7 +92,7 @@ func (c *Connection) processMqttMessage(msg packets.MqttPacket) error {
 		// Subscribe for each subscription
 		for _, sub := range packet.Subscriptions {
 			fmt.Println(sub.Topic)
-			if !c.server.onSubscribe(string(sub.Topic), string(c.clientId)) {
+			if !c.server.onSubscribe(string(sub.Topic), string(c.clientId), sub.Qos) {
 				ack.Qos = append(ack.Qos, 0x80) // 0x80 indicate subscription failure
 				continue
 			}
@@ -111,7 +114,7 @@ func (c *Connection) processMqttMessage(msg packets.MqttPacket) error {
 		// Unsubscribe from each subscription
 		for _, sub := range packet.Topics {
 			fmt.Println(sub.Topic)
-			c.server.onUnsubscribe(string(sub.Topic), string(c.clientId))
+			c.server.onUnsubscribe(string(sub.Topic), string(c.clientId), sub.Qos)
 
 		}
 
@@ -128,6 +131,8 @@ func (c *Connection) processMqttMessage(msg packets.MqttPacket) error {
 		}
 
 	case packets.TypeOfDisconnect:
+		log.Println("disconnect")
+		delete(c.server.clients, string(c.clientId))
 		return io.EOF
 
 	case packets.TypeOfPublish:

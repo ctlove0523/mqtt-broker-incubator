@@ -18,9 +18,10 @@ type Server struct {
 	AuthFunction  AuthFunction
 	msgHandlers   []MessageHandler
 	clients       map[string]*Connection
-	subscriptions map[string][]string // 订阅topic的客户端
-	clientSubs    map[string][]string // 客户端订阅的topic
+	subscriptions map[string][]string      // 订阅topic的客户端
+	clientSubs    map[string]*Subscription // 客户端订阅的topic
 	msgIds        map[string]uint16
+	subStore      SubscriptionStore
 }
 
 func NewServer(address string, port int) *Server {
@@ -33,8 +34,9 @@ func NewServer(address string, port int) *Server {
 		msgHandlers:   []MessageHandler{},
 		clients:       make(map[string]*Connection),
 		subscriptions: make(map[string][]string),
-		clientSubs:    make(map[string][]string),
+		clientSubs:    make(map[string]*Subscription),
 		msgIds:        make(map[string]uint16),
+		subStore:      NewPebbleSubscriptionStore("sub"),
 	}
 
 	return s
@@ -53,6 +55,28 @@ func (s *Server) Start() {
 	listener, err := net.Listen("tcp", strings.Join([]string{s.Address, strconv.Itoa(s.Port)}, ":"))
 	if err != nil {
 		fmt.Printf("server start failed on %s bind %d Port", s.Address, s.Port)
+		return
+	}
+
+	// 初始化订阅数据
+	subs := s.subStore.listAllSubscriptions()
+	for _, v := range subs {
+		clientId := string((*v).ClientId)
+		s.clientSubs[clientId] = v
+
+		var topics []string
+		for _, t := range v.Topics {
+			topics = append(topics, t.Topic)
+		}
+		for _, tt := range topics {
+			clientIds, ok := s.subscriptions[tt]
+			if !ok {
+				clientIds = []string{}
+			}
+			clientIds = append(clientIds, clientId)
+			s.subscriptions[tt] = clientIds
+		}
+
 	}
 
 	for {
@@ -65,8 +89,11 @@ func (s *Server) Start() {
 		mqttConn := s.newConnection(conn)
 		go func() {
 			err := mqttConn.Process()
+			fmt.Println("process")
 			if err != nil {
 				fmt.Printf("process conn failed %v\n", err)
+				s.Disconnect(string(mqttConn.clientId))
+				return
 			}
 		}()
 	}
@@ -82,14 +109,7 @@ func (s *Server) Disconnect(clientId string) {
 	client, ok := s.clients[clientId]
 	if ok {
 		client.Close()
-		topics := s.clientSubs[clientId]
 		delete(s.clients, clientId)
-		delete(s.clientSubs, clientId)
-		for _, v := range topics {
-			clientIds := s.subscriptions[v]
-			clientIds = deleteElement(clientIds, clientId)
-			s.subscriptions[v] = clientIds
-		}
 	}
 }
 
@@ -97,8 +117,10 @@ func (s *Server) SetAuthFunction(function AuthFunction) {
 	s.AuthFunction = function
 }
 
-func (s *Server) onSubscribe(topic, clientId string) bool {
+func (s *Server) onSubscribe(topic, clientId string, qos uint8) bool {
 	fmt.Println("begin to process client sub")
+
+	// 订阅topic的客户端
 	clientIds, ok := s.subscriptions[topic]
 	if !ok {
 		clientIds = []string{}
@@ -106,17 +128,25 @@ func (s *Server) onSubscribe(topic, clientId string) bool {
 	clientIds = append(clientIds, clientId)
 	s.subscriptions[topic] = clientIds
 
+	// 客户端订阅的topic
 	topics, ok := s.clientSubs[clientId]
 	if !ok {
-		topics = []string{}
+		topics = &Subscription{
+			ClientId: []byte(clientId),
+			Topics:   []TopicQos{},
+		}
 	}
-	topics = append(topics, topic)
+	topics.Topics = append(topics.Topics, TopicQos{
+		Topic: topic,
+		Qos:   qos,
+	})
 	s.clientSubs[clientId] = topics
 
+	s.subStore.addNewSubscription(*topics)
 	return true
 }
 
-func (s *Server) onUnsubscribe(topic, clientId string) bool {
+func (s *Server) onUnsubscribe(topic, clientId string, qos uint8) bool {
 	_, ok := s.clients[clientId]
 	if !ok {
 		fmt.Println("client id not exit")
@@ -138,9 +168,10 @@ func (s *Server) onUnsubscribe(topic, clientId string) bool {
 		return false
 	}
 
-	topics = deleteElement(topics, topic)
+	topics.Topics = deleteTopicQos(topics.Topics, TopicQos{Topic: topic, Qos: qos})
 	s.clientSubs[clientId] = topics
 
+	s.subStore.removeSubscription(topic, clientId)
 	return true
 }
 
@@ -175,7 +206,10 @@ func (s *Server) PublishMsg(topic string, qos byte, payload []byte) {
 	pubPacket.Payload = payload
 
 	for _, clientId := range clientIds {
-		conn := s.clients[clientId]
+		conn, ok := s.clients[clientId]
+		if !ok {
+			continue
+		}
 		if qos > 0 {
 			pubPacket.MessageID = s.messageId(clientId)
 		} else {
@@ -212,8 +246,36 @@ func deleteElement(container []string, element string) []string {
 	return newContainer
 }
 
+func deleteTopicQos(topicQos []TopicQos, element TopicQos) []TopicQos {
+	index := -1
+	for i := 0; i < len(topicQos); i++ {
+		if topicQos[i].Qos == element.Qos && topicQos[i].Topic == element.Topic {
+			index = i
+			break
+		}
+	}
+	if index == -1 {
+		return topicQos
+	}
+
+	var newContainer []TopicQos
+	newContainer = append(newContainer, topicQos[:index]...)
+	newContainer = append(newContainer, topicQos[index+1:]...)
+	return newContainer
+}
+
 type Message struct {
 	Id      uint16
 	Topic   []byte
 	Payload []byte
+}
+
+type Subscription struct {
+	ClientId []byte
+	Topics   []TopicQos
+}
+
+type TopicQos struct {
+	Qos   uint8
+	Topic string
 }

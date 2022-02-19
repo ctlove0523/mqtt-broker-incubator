@@ -1,9 +1,7 @@
 package main
 
-import (
-	mqttServer "github.com/ctlove0523/mqtt-brokers/broker"
-	"time"
-)
+import "time"
+import mqttServer "github.com/ctlove0523/mqtt-brokers/broker"
 
 func main() {
 	broker := mqttServer.NewServer("localhost", 8883)
