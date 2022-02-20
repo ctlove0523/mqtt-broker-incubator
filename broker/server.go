@@ -44,8 +44,9 @@ func NewServer(address string, port int) *Server {
 
 func (s *Server) newConnection(conn net.Conn) *Connection {
 	mqttConn := &Connection{
-		socket: conn,
-		server: s,
+		socketState: connOpen,
+		socket:      conn,
+		server:      s,
 	}
 
 	return mqttConn
@@ -88,13 +89,16 @@ func (s *Server) Start() {
 
 		mqttConn := s.newConnection(conn)
 		go func() {
-			err := mqttConn.Process()
-			fmt.Println("process")
+			err = mqttConn.Process()
 			if err != nil {
-				fmt.Printf("process conn failed %v\n", err)
-				s.Disconnect(string(mqttConn.clientId))
 				return
 			}
+			//fmt.Println("process")
+			//if err != nil {
+			//	fmt.Printf("process conn failed %v\n", err)
+			//	s.Disconnect(string(mqttConn.clientId))
+			//	return
+			//}
 		}()
 	}
 }
@@ -124,6 +128,8 @@ func (s *Server) onSubscribe(topic, clientId string, qos uint8) bool {
 	clientIds, ok := s.subscriptions[topic]
 	if !ok {
 		clientIds = []string{}
+	} else {
+		clientIds = deleteElement(clientIds, clientId)
 	}
 	clientIds = append(clientIds, clientId)
 	s.subscriptions[topic] = clientIds
@@ -196,6 +202,8 @@ func (s *Server) PublishMsg(topic string, qos byte, payload []byte) {
 	clientIds := s.subscriptions[topic]
 	if len(clientIds) == 0 {
 		return
+	} else {
+		fmt.Println(clientIds)
 	}
 
 	pubPacket := &packets.PublishPacket{}

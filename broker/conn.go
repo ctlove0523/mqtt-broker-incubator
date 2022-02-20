@@ -7,29 +7,56 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 	"time"
+)
+
+const (
+	connClosed = iota
+	connOpen
 )
 
 // 代表一个client和server的连接
 type Connection struct {
-	socket   net.Conn
-	server   *Server
-	clientId []byte
-	connect  *packets.ConnectPacket
+	socketState uint8
+	lock        sync.Mutex
+	socket      net.Conn
+	server      *Server
+	clientId    []byte
+	connect     *packets.ConnectPacket
+}
+
+func (c *Connection) state() uint8 {
+	c.lock.Lock()
+	res := c.socketState
+	c.lock.Unlock()
+	return res
 }
 
 func (c *Connection) Close() {
-	err := c.socket.Close()
-	if err != nil {
-		log.Printf("close connection faield,client id = %s,err = %s\n", c.clientId, err)
-	} else {
-		log.Println("close connection success")
+	fmt.Println("try close connection")
+	c.lock.Lock()
+	state := c.socketState
+	if state == connOpen {
+		err := c.socket.Close()
+		if err != nil {
+			log.Printf("close connection faield,client id = %s,err = %s\n", c.clientId, err)
+		} else {
+			log.Println("close connection success")
+		}
+		c.socketState = connClosed
+
+		delete(c.server.clients, string(c.clientId))
+
 	}
+
+	c.lock.Unlock()
+
 }
 
 // Process 处理连接上的请求
 func (c *Connection) Process() error {
-	//defer c.Close()
+	defer c.Close()
 	reader := bufio.NewReaderSize(c.socket, 65536)
 	maxSize := int64(10240)
 	for {
@@ -37,18 +64,23 @@ func (c *Connection) Process() error {
 		err := c.socket.SetDeadline(time.Now().Add(time.Second * 120))
 		if err != nil {
 			log.Printf("conn set deadline failed %v", err)
+			return err
 		}
 
 		// 解码 MQTT packet
 		msg, err := DecodePacket(reader, maxSize)
 		if err != nil {
-			log.Printf("decode mqtt packet failed %s\n", err)
+			if c.state() == connOpen {
+				log.Printf("decode mqtt packet failed %s\n", err)
+			}
 			return err
 		}
 
 		// 处理接收的MQTT消息
 		if err := c.processMqttMessage(msg); err != nil {
-			log.Printf("process mqtt message failed %s\n", err)
+			if c.state() == connOpen {
+				log.Printf("process mqtt message failed %s\n", err)
+			}
 			return err
 		}
 	}

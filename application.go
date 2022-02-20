@@ -1,17 +1,19 @@
 package main
 
-import "time"
-import mqttServer "github.com/ctlove0523/mqtt-brokers/broker"
+import (
+	"github.com/ctlove0523/mqtt-brokers/broker"
+	"time"
+)
 
 func main() {
-	broker := mqttServer.NewServer("localhost", 8883)
+	server := broker.NewServer("localhost", 8883)
 
 	go func() {
-		broker.Start()
+		server.Start()
 	}()
 
 	for ; ; {
-		broker.PublishMsg("test", 1, []byte("hello client"))
-		time.Sleep(5 * time.Second)
+		time.Sleep(10 * time.Second)
+		server.PublishMsg("test", 1, []byte("hello client"))
 	}
 }

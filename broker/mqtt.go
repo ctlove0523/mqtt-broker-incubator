@@ -16,6 +16,7 @@ type Reader interface {
 func DecodePacket(rdr Reader, maxMessageSize int64) (packets.MqttPacket, error) {
 	hdr, sizeOf, messageType, err := decodeHeader(rdr)
 	if err != nil {
+		fmt.Println("decode header failed")
 		return nil, err
 	}
 
