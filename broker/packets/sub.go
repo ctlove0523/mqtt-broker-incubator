@@ -6,14 +6,14 @@ import (
 )
 
 type SubscribePacket struct {
-	Header FixedHeader
+	Header        FixedHeader
 	MessageID     uint16
 	Subscriptions []TopicQosTuple
 }
 
 func (s *SubscribePacket) EncodeTo(w io.Writer) (int, error) {
-	array := buffers.Buffers.Get()
-	defer buffers.Buffers.Put(array)
+	array := buffers.Pools.Get()
+	defer buffers.Pools.Put(array)
 
 	head, buf := array.Split(maxHeaderSize)
 	offset := writeUint16(buf, s.MessageID)

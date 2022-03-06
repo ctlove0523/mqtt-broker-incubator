@@ -6,16 +6,15 @@ import (
 )
 
 type PublishPacket struct {
-	Header FixedHeader
+	Header    FixedHeader
 	TopicName []byte
 	MessageID uint16
 	Payload   []byte
 }
 
-
-func (p *PublishPacket) EncodeTo(w io.Writer) (int, error){
-	array := buffers.Buffers.Get()
-	defer buffers.Buffers.Put(array)
+func (p *PublishPacket) EncodeTo(w io.Writer) (int, error) {
+	array := buffers.Pools.Get()
+	defer buffers.Pools.Put(array)
 
 	head, buf := array.Split(maxHeaderSize)
 	length := 2 + len(p.TopicName) + len(p.Payload)

@@ -19,8 +19,8 @@ type ConnAckPacket struct {
 }
 
 func (c *ConnAckPacket) EncodeTo(w io.Writer) (int, error) {
-	array := buffers.Buffers.Get()
-	defer buffers.Buffers.Put(array)
+	array := buffers.Pools.Get()
+	defer buffers.Pools.Put(array)
 
 	//write padding
 	head, buf := array.Split(maxHeaderSize)

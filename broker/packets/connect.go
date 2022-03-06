@@ -25,8 +25,8 @@ type ConnectPacket struct {
 }
 
 func (c *ConnectPacket) EncodeTo(w io.Writer) (int, error) {
-	array := buffers.Buffers.Get()
-	defer buffers.Buffers.Put(array)
+	array := buffers.Pools.Get()
+	defer buffers.Pools.Put(array)
 
 	// Calculate the max length
 	head, buf := array.Split(maxHeaderSize)
@@ -69,4 +69,3 @@ func (c *ConnectPacket) EncodeTo(w io.Writer) (int, error) {
 func (c *ConnectPacket) Type() uint8 {
 	return TypeOfConnect
 }
-

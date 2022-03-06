@@ -6,14 +6,14 @@ import (
 )
 
 type Unsubscribe struct {
-	Header FixedHeader
+	Header    FixedHeader
 	MessageID uint16
 	Topics    []TopicQosTuple
 }
 
 func (u *Unsubscribe) EncodeTo(w io.Writer) (int, error) {
-	array := buffers.Buffers.Get()
-	defer buffers.Buffers.Put(array)
+	array := buffers.Pools.Get()
+	defer buffers.Pools.Put(array)
 
 	head, buf := array.Split(maxHeaderSize)
 	offset := writeUint16(buf, u.MessageID)

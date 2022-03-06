@@ -11,8 +11,8 @@ type PubAckPacket struct {
 }
 
 func (p *PubAckPacket) EncodeTo(w io.Writer) (int, error) {
-	array := buffers.Buffers.Get()
-	defer buffers.Buffers.Put(array)
+	array := buffers.Pools.Get()
+	defer buffers.Pools.Put(array)
 
 	head, buf := array.Split(maxHeaderSize)
 	offset := writeUint16(buf, p.MessageID)
