@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"github.com/ctlove0523/mqtt-brokers/broker/packets"
+	"go.uber.org/zap"
 	"io"
 	"log"
 	"net"
@@ -16,14 +17,13 @@ const (
 	connOpen
 )
 
-// 代表一个client和server的连接
+// Connection 代表一个client和server的连接
 type Connection struct {
 	socketState uint8
 	lock        sync.Mutex
 	socket      net.Conn
 	server      *Server
 	clientId    []byte
-	connect     *packets.ConnectPacket
 }
 
 func (c *Connection) state() uint8 {
@@ -34,15 +34,15 @@ func (c *Connection) state() uint8 {
 }
 
 func (c *Connection) Close() {
-	fmt.Println("try close connection")
+	c.server.Log.Info("try to close connection")
 	c.lock.Lock()
 	state := c.socketState
 	if state == connOpen {
 		err := c.socket.Close()
 		if err != nil {
-			log.Printf("close connection faield,client id = %s,err = %s\n", c.clientId, err)
+			c.server.Log.Error("close connection failed", zap.String("clinet id", string(c.clientId)), zap.Error(err))
 		} else {
-			log.Println("close connection success")
+			c.server.Log.Info("close connection success")
 		}
 		c.socketState = connClosed
 
@@ -63,7 +63,7 @@ func (c *Connection) Process() error {
 		// read/write 限制以处理悬空连接
 		err := c.socket.SetDeadline(time.Now().Add(time.Second * 120))
 		if err != nil {
-			log.Printf("conn set deadline failed %v", err)
+			c.server.Log.Error("connection set deadline failed,", zap.Error(err))
 			return err
 		}
 
@@ -71,7 +71,7 @@ func (c *Connection) Process() error {
 		msg, err := DecodePacket(reader, maxSize)
 		if err != nil {
 			if c.state() == connOpen {
-				log.Printf("decode mqtt packet failed %s\n", err)
+				c.server.Log.Info("decode mqtt packet failed,err ", zap.Error(err))
 			}
 			return err
 		}
@@ -79,7 +79,7 @@ func (c *Connection) Process() error {
 		// 处理接收的MQTT消息
 		if err := c.processMqttMessage(msg); err != nil {
 			if c.state() == connOpen {
-				log.Printf("process mqtt message failed %s\n", err)
+				c.server.Log.Error("process mqtt message failed,err ", zap.Error(err))
 			}
 			return err
 		}
@@ -175,7 +175,7 @@ func (c *Connection) processMqttMessage(msg packets.MqttPacket) error {
 			Topic:   packet.TopicName,
 			Payload: packet.Payload,
 		}
-		c.server.OnMessage(msg)
+		c.server.onMessage(msg)
 
 		// Acknowledge the publication
 		if packet.Header.Qos > 0 {
@@ -208,23 +208,5 @@ func (c *Connection) onConnect(packet *packets.ConnectPacket) bool {
 		c.clientId = packet.ClientID
 		c.server.onConnect(c)
 	}
-
-	c.connect = &packets.ConnectPacket{
-		ProtoName:        packet.ProtoName,
-		Version:          packet.Version,
-		UsernameFlag:     packet.UsernameFlag,
-		PasswordFlag:     packet.PasswordFlag,
-		WillRetainFlag:   packet.WillRetainFlag,
-		WillQOS:          packet.WillQOS,
-		WillFlag:         packet.WillFlag,
-		CleanSessionFlag: packet.CleanSessionFlag,
-		KeepAlive:        packet.KeepAlive,
-		ClientID:         packet.ClientID,
-		WillTopic:        packet.WillTopic,
-		WillMessage:      packet.WillMessage,
-		Username:         packet.Username,
-		Password:         packet.Password,
-	}
-
 	return authResult
 }

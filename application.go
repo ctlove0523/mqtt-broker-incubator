@@ -6,14 +6,14 @@ import (
 )
 
 func main() {
-	server := broker.NewServer("localhost", 8883)
+	server, _ := broker.NewServer("localhost", 8883)
 
 	go func() {
 		server.Start()
 	}()
 
-	for ; ; {
-		time.Sleep(10 * time.Second)
-		server.PublishMsg("test", 1, []byte("hello client"))
-	}
+	time.Sleep(10 * time.Second)
+	server.PublishMsg("test", 1, []byte("hello client"))
+	ch := make(chan struct{})
+	<-ch
 }

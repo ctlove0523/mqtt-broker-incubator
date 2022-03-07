@@ -6,13 +6,13 @@ import (
 	"io"
 )
 
-// Reader is the requred reader for an efficient decoding.
+// Reader 用于更高效率的解码
 type Reader interface {
 	io.Reader
 	ReadByte() (byte, error)
 }
 
-// DecodePacket decodes the packet from the provided reader.
+// DecodePacket 从reader中解码MQTT包.
 func DecodePacket(rdr Reader, maxMessageSize int64) (packets.MqttPacket, error) {
 	hdr, sizeOf, messageType, err := decodeHeader(rdr)
 	if err != nil {

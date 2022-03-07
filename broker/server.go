@@ -3,9 +3,13 @@ package broker
 import (
 	"fmt"
 	"github.com/ctlove0523/mqtt-brokers/broker/packets"
+	"github.com/robfig/cron/v3"
+	"go.uber.org/zap"
+	"log"
 	"net"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type AuthFunction func(clientId, userName, password []byte) bool
@@ -22,40 +26,54 @@ type Server struct {
 	clientSubs    map[string]*Subscription // 客户端订阅的topic
 	msgIds        map[string]uint16
 	subStore      SubscriptionStore
+
+	// QOS1
+	waitAckMessageIds map[string]map[uint16]bool // 存储每个client等待确认的消息
+	waitAckMessage    map[int64][]Qos1Message    // 等待确认的消息内容
+	timerManager      *cron.Cron
+
+	startTime   int64 // server启动时间
+	startSwitch chan struct{}
+
+	Log *zap.Logger
 }
 
-func NewServer(address string, port int) *Server {
+func NewServer(address string, port int) (*Server, error) {
+	logger, err := zap.NewProduction()
+	if err != nil {
+		fmt.Println("create zap logger failed")
+		return nil, err
+	}
+	defer logger.Sync()
+
 	s := &Server{
 		Address: address,
 		Port:    port,
 		AuthFunction: func(clientId, userName, password []byte) bool {
 			return true
 		},
-		msgHandlers:   []MessageHandler{},
-		clients:       make(map[string]*Connection),
-		subscriptions: make(map[string][]string),
-		clientSubs:    make(map[string]*Subscription),
-		msgIds:        make(map[string]uint16),
-		subStore:      NewPebbleSubscriptionStore("sub"),
+		msgHandlers:       []MessageHandler{},
+		clients:           make(map[string]*Connection),
+		subscriptions:     make(map[string][]string),
+		clientSubs:        make(map[string]*Subscription),
+		msgIds:            make(map[string]uint16),
+		subStore:          NewPebbleSubscriptionStore("sub"),
+		timerManager:      cron.New(cron.WithSeconds()),
+		waitAckMessageIds: map[string]map[uint16]bool{},
+		waitAckMessage:    map[int64][]Qos1Message{},
+		startSwitch:       make(chan struct{}),
+		Log:               logger,
 	}
 
-	return s
-}
-
-func (s *Server) newConnection(conn net.Conn) *Connection {
-	mqttConn := &Connection{
-		socketState: connOpen,
-		socket:      conn,
-		server:      s,
-	}
-
-	return mqttConn
+	return s, nil
 }
 
 func (s *Server) Start() {
+	s.Log.Info("begin to start mqtt server")
+	s.startTime = time.Now().Unix()
 	listener, err := net.Listen("tcp", strings.Join([]string{s.Address, strconv.Itoa(s.Port)}, ":"))
 	if err != nil {
-		fmt.Printf("server start failed on %s bind %d Port", s.Address, s.Port)
+		s.Log.Error("server start failed:", zap.Int("port", s.Port), zap.String("address", s.Address))
 		return
 	}
 
@@ -80,33 +98,43 @@ func (s *Server) Start() {
 
 	}
 
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			fmt.Printf("create new conn failed %v", err)
-			continue
-		}
-
-		mqttConn := s.newConnection(conn)
-		go func() {
-			err = mqttConn.Process()
+	go func() {
+		for {
+			conn, err := listener.Accept()
 			if err != nil {
-				return
+				fmt.Printf("create new conn failed %v", err)
+				continue
 			}
-			//fmt.Println("process")
-			//if err != nil {
-			//	fmt.Printf("process conn failed %v\n", err)
-			//	s.Disconnect(string(mqttConn.clientId))
-			//	return
-			//}
-		}()
+
+			mqttConn := s.newConnection(conn)
+			go func() {
+				err = mqttConn.Process()
+				if err != nil {
+					return
+				}
+			}()
+		}
+	}()
+
+	// 启动qos1定时任务
+	_, err = s.timerManager.AddJob("0/20 * * * * ? ", s)
+	if err != nil {
+		s.Log.Error("add qosq job failed")
 	}
+
+	s.timerManager.Start()
+
+	s.Log.Info("start mqtt server success")
+	<-s.startSwitch
 }
 
 func (s *Server) Close() {
 	for _, v := range s.clients {
 		v.Close()
 	}
+
+	s.timerManager.Stop()
+	s.startSwitch <- struct{}{}
 }
 
 func (s *Server) Disconnect(clientId string) {
@@ -121,8 +149,19 @@ func (s *Server) SetAuthFunction(function AuthFunction) {
 	s.AuthFunction = function
 }
 
+func (s *Server) newConnection(conn net.Conn) *Connection {
+	mqttConn := &Connection{
+		socketState: connOpen,
+		socket:      conn,
+		server:      s,
+	}
+
+	return mqttConn
+}
+
 func (s *Server) onSubscribe(topic, clientId string, qos uint8) bool {
 	fmt.Println("begin to process client sub")
+	log.Printf("begin to process client sub,topic = %s,clinet id = %s,qos = %d", topic, clientId, qos)
 
 	// 订阅topic的客户端
 	clientIds, ok := s.subscriptions[topic]
@@ -181,7 +220,7 @@ func (s *Server) onUnsubscribe(topic, clientId string, qos uint8) bool {
 	return true
 }
 
-func (s *Server) OnMessage(msg Message) bool {
+func (s *Server) onMessage(msg Message) bool {
 	if len(s.msgHandlers) != 0 {
 		for _, handler := range s.msgHandlers {
 			handler(msg)
@@ -196,6 +235,12 @@ func (s *Server) onConnect(conn *Connection) {
 }
 
 func (s *Server) onPubAck(clientId string, messageId uint16) {
+	fmt.Printf("get message ack from client %s fir nessage %d\n", clientId, messageId)
+	messageIds, ok := s.waitAckMessageIds[clientId]
+	if !ok {
+		return
+	}
+	delete(messageIds, messageId)
 }
 
 func (s *Server) PublishMsg(topic string, qos byte, payload []byte) {
@@ -218,8 +263,36 @@ func (s *Server) PublishMsg(topic string, qos byte, payload []byte) {
 		if !ok {
 			continue
 		}
-		if qos > 0 {
+		if qos == 1 {
 			pubPacket.MessageID = s.messageId(clientId)
+
+			// 存储QOS = 1的消息未重新发送做准备
+			waitClientAckMessageIds, ok := s.waitAckMessageIds[clientId]
+			if ok {
+				waitClientAckMessageIds[pubPacket.MessageID] = true
+			} else {
+				waitClientAckMessageIds = map[uint16]bool{}
+				waitClientAckMessageIds[pubPacket.MessageID] = true
+				s.waitAckMessageIds[clientId] = waitClientAckMessageIds
+			}
+
+			qos1Msg := Qos1Message{
+				topic:     topic,
+				payload:   payload,
+				MessageID: pubPacket.MessageID,
+			}
+
+			slot := (time.Now().Unix() - s.startTime) / 20
+			log.Printf("slot is %d\n", slot)
+			ackMessages, ok := s.waitAckMessage[slot]
+			if ok {
+				ackMessages = append(ackMessages, qos1Msg)
+			} else {
+				ackMessages = make([]Qos1Message, 0)
+				ackMessages = append(ackMessages, qos1Msg)
+				s.waitAckMessage[slot] = ackMessages
+			}
+
 		} else {
 			pubPacket.MessageID = 0
 		}
@@ -231,9 +304,54 @@ func (s *Server) PublishMsg(topic string, qos byte, payload []byte) {
 	}
 }
 
+type Qos1Message struct {
+	topic     string
+	payload   []byte
+	MessageID uint16
+}
+
 func (s *Server) messageId(clientId string) uint16 {
 	s.msgIds[clientId] += 1
 	return s.msgIds[clientId]
+}
+
+func (s *Server) Run() {
+	slot := (time.Now().Unix()-s.startTime)/20 - 1
+	log.Printf("run slot is %d\n", slot)
+	ackMessages, ok := s.waitAckMessage[slot]
+	if !ok {
+		fmt.Println("no need republish messages")
+		return
+	}
+	for _, msg := range ackMessages {
+		topic := msg.topic
+
+		clientIds, ok := s.subscriptions[topic]
+		if !ok {
+			fmt.Printf("no client sub %s\n", topic)
+			continue
+		}
+
+		pubPacket := &packets.PublishPacket{}
+		pubPacket.Header.MessageType = 3
+		pubPacket.Header.Dup = true
+		pubPacket.Header.Qos = 1
+		pubPacket.TopicName = []byte(topic)
+		pubPacket.Payload = msg.payload
+		pubPacket.MessageID = msg.MessageID
+		for _, clientId := range clientIds {
+			conn, ok := s.clients[clientId]
+			if !ok {
+				continue
+			}
+			_, err := pubPacket.EncodeTo(conn.socket)
+			if err != nil {
+				fmt.Println("republish ")
+			}
+		}
+	}
+
+	delete(s.waitAckMessage, slot)
 }
 
 func deleteElement(container []string, element string) []string {
